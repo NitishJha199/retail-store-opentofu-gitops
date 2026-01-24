@@ -1,11 +1,11 @@
-# Retail Store Terraform Infrastructure
+# Retail Store OpenTofu Infrastructure
 
-This directory contains the Terraform configuration for deploying the retail store application infrastructure on AWS EKS.
+This directory contains the OpenTofu configuration for deploying the retail store application infrastructure on AWS EKS.
 
 ## 📁 File Structure
 
 ```
-terraform-organized/
+open-tofu/
 ├── main.tf                    # Primary infrastructure (VPC, EKS)
 ├── variables.tf               # Input variables
 ├── outputs.tf                 # Output values
@@ -22,13 +22,13 @@ terraform-organized/
 ### 1. Prerequisites
 
 - AWS CLI configured with appropriate credentials
-- Terraform >= 1.0 installed
+- OpenTofu >= 1.11 installed
 - kubectl installed
 
 ### 2. Configuration
 
 ```bash
-# Copy the example variables file
+# Copy the example variables file (if available)
 cp terraform.tfvars.example terraform.tfvars
 
 # Edit the variables file with your preferred settings
@@ -43,35 +43,35 @@ You can deploy in two phases for better control:
 
 #### Phase 1: Deploy EKS Cluster Only
 ```bash
-# Initialize Terraform
-terraform init
+# Initialize OpenTofu
+tofu init
 
 # Deploy only the EKS cluster and VPC
-terraform apply -target=module.retail_app_eks -target=module.vpc --auto-approve
+tofu apply -target=module.retail_app_eks -target=module.vpc --auto-approve
 ```
 
 #### Phase 2: Deploy Add-ons and ArgoCD
 ```bash
 # Get the actual cluster name (with suffix)
-terraform output cluster_name
+tofu output cluster_name
 
 # Update kubeconfig to access the cluster (use the output from above)
 aws eks update-kubeconfig --region <aws region> --name <cluster-name-with-suffix>
 
 # Deploy the remaining components
-terraform apply --auto-approve
+tofu apply --auto-approve
 ```
 
 #### Single Phase Deployment (Alternative)
 ```bash
-# Initialize Terraform
-terraform init
+# Initialize OpenTofu
+tofu init
 
 # Review the plan
-terraform plan
+tofu plan
 
 # Apply the complete configuration
-terraform apply
+tofu apply
 ```
 
 ### 4. Configure kubectl
@@ -177,8 +177,57 @@ Internet
 To destroy all resources:
 
 ```bash
-terraform destroy
+tofu destroy
 ```
 
 **Note**: This will delete all resources including the EKS cluster and VPC. Make sure to backup any important data first.
+
+## 🔧 Advanced Configuration
+
+### Custom Variables File
+
+Create a `terraform.tfvars` file with your specific configuration:
+
+```hcl
+# terraform.tfvars
+aws_region                = "us-west-2"
+cluster_name              = "retail-store"
+environment               = "production"
+kubernetes_version        = "1.33"
+vpc_cidr                  = "10.0.0.0/16"
+enable_single_nat_gateway = false    # Use multiple NAT gateways for production
+enable_monitoring         = true     # Enable monitoring stack
+```
+
+### Environment-Specific Configurations
+
+For multiple environments, create separate variable files:
+
+```bash
+# Development
+tofu apply -var-file="environments/dev.tfvars"
+
+# Staging  
+tofu apply -var-file="environments/staging.tfvars"
+
+# Production
+tofu apply -var-file="environments/prod.tfvars"
+```
+
+### State Management
+
+For production use, configure remote state:
+
+```hcl
+# backend.tf
+terraform {
+  backend "s3" {
+    bucket         = "your-terraform-state-bucket"
+    key            = "retail-store/terraform.tfstate"
+    region         = "us-west-2"
+    encrypt        = true
+    dynamodb_table = "terraform-state-lock"
+  }
+}
+```
 

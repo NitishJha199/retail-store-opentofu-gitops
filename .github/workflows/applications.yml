@@ -1,0 +1,279 @@
+name: 🚀 Application Deployment
+
+on:
+  push:
+    branches: [ gitops ]
+    paths:
+      - 'src/**'
+      - 'argocd/**'
+      - '.github/workflows/applications.yml'
+  pull_request:
+    branches: [ gitops ]
+    paths:
+      - 'src/**'
+      - 'argocd/**'
+      - '.github/workflows/applications.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      service:
+        description: 'Service to deploy (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - ui
+          - catalog
+          - cart
+          - orders
+          - checkout
+
+env:
+  AWS_REGION: "us-west-2"
+  ARGOCD_VERSION: "2.12.3"
+
+jobs:
+  detect-changes:
+    name: 🔍 Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.changes.outputs.ui }}
+      catalog: ${{ steps.changes.outputs.catalog }}
+      cart: ${{ steps.changes.outputs.cart }}
+      orders: ${{ steps.changes.outputs.orders }}
+      checkout: ${{ steps.changes.outputs.checkout }}
+      argocd: ${{ steps.changes.outputs.argocd }}
+      any-service: ${{ steps.changes.outputs.any-service }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect Changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            ui:
+              - 'src/ui/**'
+            catalog:
+              - 'src/catalog/**'
+            cart:
+              - 'src/cart/**'
+            orders:
+              - 'src/orders/**'
+            checkout:
+              - 'src/checkout/**'
+            argocd:
+              - 'argocd/**'
+            any-service:
+              - 'src/**'
+
+  validate-helm:
+    name: ✅ Validate Helm Charts
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any-service == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        service: [ui, catalog, cart, orders, checkout]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: ✅ Lint Helm Chart
+        if: needs.detect-changes.outputs[matrix.service] == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ -d "src/${{ matrix.service }}/chart" ]; then
+            helm lint src/${{ matrix.service }}/chart
+            helm template test-release src/${{ matrix.service }}/chart --dry-run
+          else
+            echo "No Helm chart found for ${{ matrix.service }}"
+          fi
+
+  validate-argocd:
+    name: ✅ Validate ArgoCD Manifests
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.argocd == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.33.0'
+
+      - name: ✅ Validate ArgoCD Applications
+        run: |
+          for file in argocd/applications/*.yaml; do
+            echo "Validating $file"
+            kubectl apply --dry-run=client -f "$file"
+          done
+
+      - name: ✅ Validate ArgoCD Projects
+        run: |
+          for file in argocd/projects/*.yaml; do
+            echo "Validating $file"
+            kubectl apply --dry-run=client -f "$file"
+          done
+
+  security-scan:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any-service == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🛡️ Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './src'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📤 Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-argocd-config:
+    name: 🔄 Deploy ArgoCD Configuration
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-argocd]
+    if: |
+      (github.ref == 'refs/heads/gitops' && github.event_name == 'push' && needs.detect-changes.outputs.argocd == 'true') ||
+      github.event_name == 'workflow_dispatch'
+    environment: 
+      name: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔧 Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.33.0'
+
+      - name: ⚙️ Configure kubectl
+        run: |
+          # Get cluster name from OpenTofu state or use default pattern
+          CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[?contains(@, `retail-store`)]' --output text | head -1)
+          if [ -z "$CLUSTER_NAME" ]; then
+            echo "No EKS cluster found with 'retail-store' in name"
+            exit 1
+          fi
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name $CLUSTER_NAME
+          kubectl cluster-info
+
+      - name: 🚀 Deploy ArgoCD Projects
+        run: |
+          kubectl apply -f argocd/projects/ -n argocd
+          echo "ArgoCD projects deployed successfully"
+
+      - name: 🚀 Deploy ArgoCD Applications
+        run: |
+          kubectl apply -f argocd/applications/ -n argocd
+          echo "ArgoCD applications deployed successfully"
+
+      - name: ⏳ Wait for Applications to Sync
+        run: |
+          echo "Waiting for ArgoCD applications to sync..."
+          sleep 30
+          
+          # Check application status
+          kubectl get applications -n argocd
+          
+          # Wait for applications to be healthy (with timeout)
+          timeout 300 bash -c '
+            while true; do
+              unhealthy=$(kubectl get applications -n argocd -o json | jq -r ".items[] | select(.status.health.status != \"Healthy\") | .metadata.name" | wc -l)
+              if [ "$unhealthy" -eq 0 ]; then
+                echo "All applications are healthy!"
+                break
+              fi
+              echo "Waiting for $unhealthy applications to become healthy..."
+              sleep 10
+            done
+          ' || echo "Timeout waiting for applications to become healthy"
+
+      - name: 📊 Deployment Summary
+        run: |
+          echo "## 🚀 Application Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get application status
+          kubectl get applications -n argocd -o json | jq -r '
+            .items[] | 
+            "| **" + .metadata.name + "** | " + .status.sync.status + " | " + .status.health.status + " |"
+          ' > app_status.txt
+          
+          echo "| Application | Sync Status | Health Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------|-------------|---------------|" >> $GITHUB_STEP_SUMMARY
+          cat app_status.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get load balancer URL
+          LB_URL=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Not available yet")
+          echo "**Application URL:** http://$LB_URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment || 'dev' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+  notify-deployment:
+    name: 📢 Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-argocd-config]
+    if: always() && (github.ref == 'refs/heads/gitops' && github.event_name == 'push')
+    steps:
+      - name: 📢 Create Deployment Status Comment
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ needs.deploy-argocd-config.result }}';
+            const emoji = status === 'success' ? '✅' : '❌';
+            const statusText = status === 'success' ? 'successful' : 'failed';
+            
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: `${emoji} **Deployment ${statusText}**
+              
+              **Environment:** ${{ github.event.inputs.environment || 'dev' }}
+              **Commit:** ${context.sha.substring(0, 7)}
+              **Triggered by:** @${{ github.actor }}
+              
+              ${status === 'success' ? 
+                '🎉 Applications have been deployed successfully via ArgoCD!' : 
+                '💥 Deployment failed. Check the workflow logs for details.'}
+              `
+            });
