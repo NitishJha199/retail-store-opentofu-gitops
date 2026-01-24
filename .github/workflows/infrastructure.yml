@@ -1,0 +1,79 @@
+name: Infrastructure Validation
+
+on:
+  pull_request:
+    branches: [gitops]
+    paths: ['terraform/**', 'argocd/**']
+  push:
+    branches: [gitops]
+    paths: ['terraform/**', 'argocd/**']
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  opentofu-validate:
+    name: OpenTofu Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "~1.6"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: OpenTofu Format Check
+        run: |
+          cd terraform
+          tofu fmt -check -recursive
+
+      - name: OpenTofu Init
+        run: |
+          cd terraform
+          tofu init -backend=false
+
+      - name: OpenTofu Validate
+        run: |
+          cd terraform
+          tofu validate
+
+      - name: OpenTofu Plan (Dry Run)
+        if: github.event_name == 'pull_request'
+        run: |
+          cd terraform
+          tofu init
+          tofu plan -no-color
+        continue-on-error: true
+
+  helm-validate:
+    name: Helm Chart Validation
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [ui, catalog, cart, checkout, orders]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.12.0'
+
+      - name: Helm Lint ${{ matrix.service }}
+        run: |
+          helm lint src/${{ matrix.service }}/chart/
+
+      - name: Helm Template Test ${{ matrix.service }}
+        run: |
+          helm template test-release src/${{ matrix.service }}/chart/ \
+            --set image.repository=test \
+            --set image.tag=test \
+            --dry-run
