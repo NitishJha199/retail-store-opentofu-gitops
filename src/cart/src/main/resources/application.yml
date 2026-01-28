@@ -1,3 +1,5 @@
+# GitOps Test - Testing GitHub Actions Workflow
+
 management:
   endpoints:
     web:
