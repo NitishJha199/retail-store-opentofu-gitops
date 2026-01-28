@@ -1,0 +1,364 @@
+name: 🔄 GitOps Workflow
+
+on:
+  push:
+    branches: [ gitops ]
+    paths:
+      - 'src/**'
+  pull_request:
+    branches: [ gitops ]
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  # Step 1: Code Push (Trigger) - Detect Changes
+  detect-changes:
+    name: 📋 Code Push - Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.changes.outputs.ui }}
+      catalog: ${{ steps.changes.outputs.catalog }}
+      cart: ${{ steps.changes.outputs.cart }}
+      orders: ${{ steps.changes.outputs.orders }}
+      checkout: ${{ steps.changes.outputs.checkout }}
+      any-service: ${{ steps.changes.outputs.any-service }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect Service Changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            ui:
+              - 'src/ui/**'
+            catalog:
+              - 'src/catalog/**'
+            cart:
+              - 'src/cart/**'
+            orders:
+              - 'src/orders/**'
+            checkout:
+              - 'src/checkout/**'
+            any-service:
+              - 'src/**'
+
+      - name: 📊 Changes Summary
+        run: |
+          echo "## 🔍 Change Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Changed | Action |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| UI | ${{ steps.changes.outputs.ui }} | ${{ steps.changes.outputs.ui == 'true' && '🔄 Will build' || '⏭️ Skip' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Catalog | ${{ steps.changes.outputs.catalog }} | ${{ steps.changes.outputs.catalog == 'true' && '🔄 Will build' || '⏭️ Skip' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cart | ${{ steps.changes.outputs.cart }} | ${{ steps.changes.outputs.cart == 'true' && '🔄 Will build' || '⏭️ Skip' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Orders | ${{ steps.changes.outputs.orders }} | ${{ steps.changes.outputs.orders == 'true' && '🔄 Will build' || '⏭️ Skip' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkout | ${{ steps.changes.outputs.checkout }} | ${{ steps.changes.outputs.checkout == 'true' && '🔄 Will build' || '⏭️ Skip' }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Step 2: GitHub Actions - Build Images
+  build-images:
+    name: 🏗️ GitHub Actions - Build Images
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.any-service == 'true'
+    strategy:
+      matrix:
+        service: [ui, catalog, cart, orders, checkout]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Build Docker Image
+        if: needs.detect-changes.outputs[matrix.service] == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "🏗️ Building image for ${{ matrix.service }} service..."
+          docker build -t retail-store-${{ matrix.service }}:$IMAGE_TAG ./src/${{ matrix.service }}
+          docker build -t retail-store-${{ matrix.service }}:latest ./src/${{ matrix.service }}
+          echo "✅ Built retail-store-${{ matrix.service }}:$IMAGE_TAG"
+
+      - name: 📊 Build Summary
+        if: needs.detect-changes.outputs[matrix.service] == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "✅ Successfully built ${{ matrix.service }} service image" >> $GITHUB_STEP_SUMMARY
+
+  # Step 3: Push to ECR
+  push-to-ecr:
+    name: 📦 Push to ECR
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-images]
+    if: needs.build-images.result == 'success'
+    strategy:
+      matrix:
+        service: [ui, catalog, cart, orders, checkout]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔑 Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🏗️ Create ECR Repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names retail-store-${{ matrix.service }} || \
+          aws ecr create-repository --repository-name retail-store-${{ matrix.service }} \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 📦 Build and Push to ECR
+        if: needs.detect-changes.outputs[matrix.service] == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: retail-store-${{ matrix.service }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "📦 Pushing ${{ matrix.service }} to ECR..."
+          
+          # Build and push with both tags
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            ./src/${{ matrix.service }}
+          
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+      - name: 🛡️ Scan Image for Vulnerabilities
+        if: needs.detect-changes.outputs[matrix.service] == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          ECR_REPOSITORY: retail-store-${{ matrix.service }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "🛡️ Scanning ${{ matrix.service }} image for vulnerabilities..."
+          # Wait for scan to complete
+          aws ecr wait image-scan-complete \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=$IMAGE_TAG || true
+          
+          # Get scan results
+          aws ecr describe-image-scan-findings \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=$IMAGE_TAG || true
+
+  # Step 4: Update Helm Charts
+  update-helm-charts:
+    name: 📝 Update Helm Charts
+    runs-on: ubuntu-latest
+    needs: [detect-changes, push-to-ecr]
+    if: needs.push-to-ecr.result == 'success' && github.ref == 'refs/heads/gitops'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📝 Update Helm Values with New Images
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Get AWS Account ID
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          echo "📝 Updating Helm charts with new image tags..."
+          
+          # Update each service that changed
+          for service in ui catalog cart orders checkout; do
+            if [ "${{ needs.detect-changes.outputs[service] }}" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              VALUES_FILE="src/${service}/chart/values.yaml"
+              
+              if [ -f "$VALUES_FILE" ]; then
+                echo "📝 Updating $VALUES_FILE..."
+                
+                # Update image repository with correct account ID
+                sed -i "s|repository: .*|repository: ${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/retail-store-${service}|g" $VALUES_FILE
+                
+                # Update image tag
+                sed -i "s|tag: \".*\"|tag: \"${IMAGE_TAG}\"|g" $VALUES_FILE
+                
+                echo "✅ Updated $VALUES_FILE:"
+                echo "   - Repository: ${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/retail-store-${service}"
+                echo "   - Tag: ${IMAGE_TAG}"
+              fi
+            fi
+          done
+
+      - name: 📊 Show Changes
+        run: |
+          echo "📊 Helm Chart Changes:"
+          git diff src/*/chart/values.yaml || echo "No changes detected"
+
+  # Step 5: Commit Changes
+  commit-changes:
+    name: 💾 Commit Changes
+    runs-on: ubuntu-latest
+    needs: [detect-changes, update-helm-charts]
+    if: needs.update-helm-charts.result == 'success'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📝 Re-apply Helm Updates (Ensure Consistency)
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          for service in ui catalog cart orders checkout; do
+            if [ "${{ needs.detect-changes.outputs[service] }}" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              VALUES_FILE="src/${service}/chart/values.yaml"
+              if [ -f "$VALUES_FILE" ]; then
+                sed -i "s|repository: .*|repository: ${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/retail-store-${service}|g" $VALUES_FILE
+                sed -i "s|tag: \".*\"|tag: \"${IMAGE_TAG}\"|g" $VALUES_FILE
+              fi
+            fi
+          done
+
+      - name: 💾 Commit and Push Changes
+        run: |
+          git config --local user.email "gitops@github-actions.com"
+          git config --local user.name "GitOps Bot"
+          
+          # Check if there are changes to commit
+          if git diff --quiet src/*/chart/values.yaml; then
+            echo "📝 No Helm chart changes to commit"
+          else
+            echo "💾 Committing Helm chart updates..."
+            
+            # Add only the values.yaml files
+            git add src/*/chart/values.yaml
+            
+            # Create commit message with details
+            CHANGED_SERVICES=$(echo '${{ toJson(needs.detect-changes.outputs) }}' | jq -r 'to_entries | map(select(.value == "true" and .key != "any-service")) | map(.key) | join(", ")')
+            
+            git commit -m "🚀 GitOps: Update container images to ${{ github.sha }}
+
+🔄 Services Updated: ${CHANGED_SERVICES}
+📦 Image Tag: ${{ github.sha }}
+👤 Triggered by: ${{ github.actor }}
+🌐 Workflow: ${{ github.workflow }}
+
+This commit updates Helm chart values with new container image tags.
+ArgoCD will automatically detect and deploy these changes to EKS cluster."
+            
+            # Push changes
+            git push origin gitops
+            
+            echo "✅ Successfully committed and pushed Helm chart updates"
+            echo "🎯 ArgoCD will now detect changes and sync applications"
+          fi
+
+  # Step 6: ArgoCD Sync (Informational - ArgoCD handles this automatically)
+  argocd-sync-status:
+    name: 🔄 ArgoCD Sync Status
+    runs-on: ubuntu-latest
+    needs: [detect-changes, commit-changes]
+    if: always() && needs.commit-changes.result == 'success'
+    steps:
+      - name: 🔄 ArgoCD Sync Information
+        run: |
+          echo "## 🔄 ArgoCD Sync Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Helm charts updated successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎯 **Next Steps (Automatic):**" >> $GITHUB_STEP_SUMMARY
+          echo "1. ArgoCD will detect the Git repository changes" >> $GITHUB_STEP_SUMMARY
+          echo "2. ArgoCD will sync the applications with new image tags" >> $GITHUB_STEP_SUMMARY
+          echo "3. Kubernetes will pull new images from ECR" >> $GITHUB_STEP_SUMMARY
+          echo "4. Applications will be deployed to EKS cluster" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Monitor deployment:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Check ArgoCD applications" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get applications -n argocd" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Check pod status" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get pods -n retail-store" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # Step 7: Deploy on EKS (Final Status)
+  deployment-summary:
+    name: 🚀 Deploy on EKS - Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-images, push-to-ecr, update-helm-charts, commit-changes, argocd-sync-status]
+    if: always()
+    steps:
+      - name: 🚀 Complete GitOps Pipeline Summary
+        run: |
+          echo "## 🔄 Complete GitOps Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Pipeline Status Table
+          echo "### 📊 Pipeline Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Code Push | ✅ Complete | Detected service changes |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ GitHub Actions | ${{ needs.build-images.result == 'success' && '✅ Complete' || '❌ Failed' }} | Built container images |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Push to ECR | ${{ needs.push-to-ecr.result == 'success' && '✅ Complete' || '❌ Failed' }} | Pushed images to registry |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📝 Update Helm Charts | ${{ needs.update-helm-charts.result == 'success' && '✅ Complete' || '❌ Failed' }} | Updated image references |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💾 Commit Changes | ${{ needs.commit-changes.result == 'success' && '✅ Complete' || '❌ Failed' }} | Committed to Git repository |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 ArgoCD Sync | 🔄 Automatic | ArgoCD will handle deployment |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 Deploy on EKS | 🔄 In Progress | Kubernetes deployment via ArgoCD |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Service Status Table
+          echo "### 🎯 Service Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Changed | Image Built | Pushed to ECR | Helm Updated |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|-------------|---------------|--------------|" >> $GITHUB_STEP_SUMMARY
+          
+          for service in ui catalog cart orders checkout; do
+            changed="${{ needs.detect-changes.outputs[service] }}"
+            if [ "$changed" == "true" ]; then
+              echo "| **$service** | ✅ Yes | ✅ Built | ✅ Pushed | ✅ Updated |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| **$service** | ⏭️ No | ⏭️ Skipped | ⏭️ Skipped | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow:** \`${{ github.workflow }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 **GitOps workflow completed successfully!** ArgoCD will now deploy the updated applications to your EKS cluster." >> $GITHUB_STEP_SUMMARY

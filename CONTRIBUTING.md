@@ -1,439 +1,405 @@
-# 🤝 Contributing to Retail Store OpenTofu GitOps
+# 🤝 Contributing to Retail Store GitOps
 
-Thank you for your interest in contributing to this project! This guide will help you get started with contributing to our OpenTofu GitOps platform.
+Thank you for your interest in contributing to the Retail Store GitOps project! This document provides guidelines and information for contributors.
 
-## 📋 Table of Contents
+## 🌟 Ways to Contribute
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Setup](#development-setup)
-- [Contributing Guidelines](#contributing-guidelines)
-- [Pull Request Process](#pull-request-process)
-- [Issue Guidelines](#issue-guidelines)
-- [Development Workflow](#development-workflow)
-- [Testing](#testing)
-- [Documentation](#documentation)
-
-## 📜 Code of Conduct
-
-This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
-
-### Our Standards
-
-- **Be respectful** and inclusive of different viewpoints and experiences
-- **Be collaborative** and help others learn and grow
-- **Be constructive** in feedback and discussions
-- **Be patient** with newcomers and those learning
+- 🐛 **Bug Reports**: Report issues and bugs
+- 💡 **Feature Requests**: Suggest new features and improvements
+- 📝 **Documentation**: Improve documentation and guides
+- 🔧 **Code Contributions**: Submit bug fixes and new features
+- 🧪 **Testing**: Help test new features and report issues
+- 💬 **Community Support**: Help other users in discussions
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-Before contributing, ensure you have:
+- Git and GitHub account
+- AWS account with appropriate permissions
+- Docker, kubectl, OpenTofu installed
+- Basic knowledge of Kubernetes, GitOps, and Infrastructure as Code
 
-- **Git** installed and configured
-- **GitHub account** with SSH keys set up
-- **AWS CLI** configured (for testing infrastructure changes)
-- **OpenTofu** installed (version 1.11+)
-- **kubectl** installed
-- **Docker** installed (for local testing)
+### Development Setup
 
-### Fork and Clone
-
-1. **Fork** this repository to your GitHub account
-2. **Clone** your fork locally:
+1. **Fork the Repository**
    ```bash
-   git clone git@github.com:YOUR_USERNAME/retail-store-opentofu-gitops.git
+   # Fork on GitHub, then clone your fork
+   git clone https://github.com/YOUR_USERNAME/retail-store-opentofu-gitops.git
    cd retail-store-opentofu-gitops
    ```
-3. **Add upstream** remote:
+
+2. **Set Up Development Environment**
    ```bash
-   git remote add upstream git@github.com:NitishJha199/retail-store-opentofu-gitops.git
+   # Add upstream remote
+   git remote add upstream https://github.com/NitishJha199/retail-store-opentofu-gitops.git
+   
+   # Create development branch
+   git checkout -b feature/your-feature-name
    ```
 
-## 🛠️ Development Setup
-
-### Local Environment
-
-1. **Switch to gitops branch:**
+3. **Deploy Development Environment**
    ```bash
-   git checkout gitops
+   # Deploy infrastructure for testing
+   ./deploy-modules.sh
+   
+   # Build and push test images
+   ./scripts/build-and-push-images.sh
    ```
 
-2. **Install development dependencies:**
-   ```bash
-   # For Java services
-   cd src/ui && ./mvnw install
-   cd ../cart && ./mvnw install
-   cd ../orders && ./mvnw install
+## 📋 Contribution Guidelines
 
-   # For Go services
-   cd ../catalog && go mod download
+### Code Style
 
-   # For Node.js services
-   cd ../checkout && yarn install
-   ```
+#### OpenTofu/Terraform
+- Use consistent indentation (2 spaces)
+- Include comments for complex logic
+- Use meaningful variable names
+- Follow [Terraform best practices](https://www.terraform.io/docs/cloud/guides/recommended-practices/index.html)
 
-3. **Set up pre-commit hooks:**
-   ```bash
-   # Install pre-commit
-   pip install pre-commit
+```hcl
+# Good
+variable "cluster_name" {
+  description = "Name of the EKS cluster"
+  type        = string
+  default     = "retail-store"
+  
+  validation {
+    condition     = length(var.cluster_name) > 0
+    error_message = "Cluster name cannot be empty."
+  }
+}
 
-   # Install hooks
-   pre-commit install
-   ```
+# Bad
+variable "name" {
+  default = "cluster"
+}
+```
 
-### Testing Infrastructure Changes
+#### Kubernetes YAML
+- Use consistent indentation (2 spaces)
+- Include resource limits and requests
+- Add appropriate labels and annotations
+- Follow [Kubernetes best practices](https://kubernetes.io/docs/concepts/configuration/overview/)
 
-1. **Create a test environment:**
-   ```bash
-   cd open-tofu
-   cp terraform.tfvars.example terraform.tfvars
-   # Edit terraform.tfvars with your test values
-   ```
+```yaml
+# Good
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retail-store-ui
+  namespace: retail-store
+  labels:
+    app.kubernetes.io/name: ui
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: retail-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ui
+    spec:
+      containers:
+      - name: ui
+        image: retail-store-ui:latest
+        resources:
+          requests:
+            cpu: 128m
+            memory: 512Mi
+          limits:
+            memory: 512Mi
+```
 
-2. **Test your changes:**
-   ```bash
-   tofu init
-   tofu plan
-   # Review the plan carefully before applying
-   ```
+#### Documentation
+- Use clear, concise language
+- Include code examples
+- Add diagrams where helpful
+- Follow markdown best practices
 
-## 📝 Contributing Guidelines
+### Commit Messages
 
-### Types of Contributions
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
 
-We welcome several types of contributions:
+```
+<type>[optional scope]: <description>
 
-- 🐛 **Bug fixes** - Fix issues in code or documentation
-- ✨ **New features** - Add new functionality or services
-- 📚 **Documentation** - Improve or add documentation
-- 🔧 **Infrastructure** - Enhance OpenTofu configurations
-- 🚀 **CI/CD** - Improve GitHub Actions workflows
-- 🧪 **Tests** - Add or improve test coverage
-- 🎨 **UI/UX** - Improve user interface and experience
+[optional body]
 
-### Contribution Areas
+[optional footer(s)]
+```
 
-#### 🏗️ Infrastructure (OpenTofu)
-- Improve resource configurations
-- Add new AWS services integration
-- Enhance security configurations
-- Optimize cost and performance
+Types:
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, etc.)
+- `refactor`: Code refactoring
+- `test`: Adding or updating tests
+- `chore`: Maintenance tasks
 
-#### 🚀 Applications
-- Add new microservices
-- Improve existing service functionality
-- Enhance error handling and logging
-- Add monitoring and observability
+Examples:
+```
+feat(ui): add shopping cart functionality
 
-#### 🔄 CI/CD
-- Improve GitHub Actions workflows
-- Add new testing strategies
-- Enhance security scanning
-- Optimize build and deployment processes
+fix(deployment): resolve image pull secret issue
 
-#### 📚 Documentation
-- Improve README and guides
-- Add architectural documentation
-- Create troubleshooting guides
-- Add code comments and examples
+docs(readme): update installation instructions
 
-## 🔄 Pull Request Process
+chore(deps): update helm chart dependencies
+```
 
-### Before Creating a PR
+### Pull Request Process
 
-1. **Create a feature branch:**
+1. **Create Feature Branch**
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
-2. **Make your changes** following our coding standards
+2. **Make Changes**
+   - Write clean, well-documented code
+   - Add tests if applicable
+   - Update documentation
 
-3. **Test your changes:**
+3. **Test Changes**
    ```bash
-   # Run relevant tests
-   ./scripts/test.sh
-
-   # For infrastructure changes
-   cd open-tofu && tofu plan
+   # Test infrastructure changes
+   cd open-tofu
+   tofu plan
+   
+   # Test application changes
+   ./test-deployment.sh
+   
+   # Test documentation
+   # Verify all links work and formatting is correct
    ```
 
-4. **Update documentation** if needed
-
-5. **Commit your changes:**
+4. **Commit Changes**
    ```bash
    git add .
-   git commit -m "feat: add new feature description"
+   git commit -m "feat(component): description of changes"
    ```
 
-### PR Guidelines
+5. **Push and Create PR**
+   ```bash
+   git push origin feature/your-feature-name
+   # Create pull request on GitHub
+   ```
 
-#### Title Format
-Use conventional commit format:
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `docs:` - Documentation changes
-- `style:` - Code style changes
-- `refactor:` - Code refactoring
-- `test:` - Adding tests
-- `chore:` - Maintenance tasks
+6. **PR Requirements**
+   - [ ] Clear description of changes
+   - [ ] Tests pass (if applicable)
+   - [ ] Documentation updated
+   - [ ] No merge conflicts
+   - [ ] Follows code style guidelines
 
-#### Description Template
-```markdown
-## 📋 Description
-Brief description of changes
+### Testing
 
-## 🔄 Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Documentation update
-- [ ] Infrastructure change
-- [ ] CI/CD improvement
+#### Infrastructure Testing
+```bash
+# Validate OpenTofu configuration
+cd open-tofu
+tofu fmt -check
+tofu validate
 
-## 🧪 Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing completed
-- [ ] Infrastructure plan reviewed
-
-## 📚 Documentation
-- [ ] README updated
-- [ ] Code comments added
-- [ ] Architecture docs updated
-
-## ✅ Checklist
-- [ ] Code follows style guidelines
-- [ ] Self-review completed
-- [ ] Tests added/updated
-- [ ] Documentation updated
+# Plan changes
+tofu plan
 ```
 
-### Review Process
+#### Application Testing
+```bash
+# Build and test images
+docker build -t test-ui ./src/ui/
+docker run --rm test-ui npm test
 
-1. **Automated checks** must pass (CI/CD pipeline)
-2. **Code review** by at least one maintainer
-3. **Testing** in development environment
-4. **Documentation review** if applicable
-5. **Final approval** and merge
+# Integration testing
+./test-deployment.sh
+```
 
-## 🐛 Issue Guidelines
+#### Documentation Testing
+```bash
+# Check markdown formatting
+markdownlint *.md docs/*.md
 
-### Bug Reports
+# Test links
+markdown-link-check README.md
+```
 
-Use the bug report template:
+## 🐛 Bug Reports
+
+### Before Reporting
+
+1. **Search existing issues** to avoid duplicates
+2. **Test with latest version** to ensure bug still exists
+3. **Gather relevant information** (logs, configurations, etc.)
+
+### Bug Report Template
 
 ```markdown
-## 🐛 Bug Description
-Clear description of the bug
+**Bug Description**
+A clear description of the bug.
 
-## 🔄 Steps to Reproduce
+**Steps to Reproduce**
 1. Step one
 2. Step two
 3. Step three
 
-## 💭 Expected Behavior
-What should happen
+**Expected Behavior**
+What you expected to happen.
 
-## 🔍 Actual Behavior
-What actually happens
+**Actual Behavior**
+What actually happened.
 
-## 🌍 Environment
-- OS: [e.g., macOS, Linux, Windows]
-- OpenTofu version: [e.g., 1.11.3]
+**Environment**
+- OS: [e.g., Ubuntu 20.04]
+- OpenTofu version: [e.g., 1.6.0]
+- Kubernetes version: [e.g., 1.28]
 - AWS region: [e.g., us-west-2]
-- Kubernetes version: [e.g., 1.33]
 
-## 📋 Additional Context
-Screenshots, logs, or other context
+**Logs**
+```
+Paste relevant logs here
 ```
 
-### Feature Requests
+**Additional Context**
+Any other relevant information.
+```
 
-Use the feature request template:
+## 💡 Feature Requests
+
+### Feature Request Template
 
 ```markdown
-## 💡 Feature Description
-Clear description of the proposed feature
+**Feature Description**
+A clear description of the feature you'd like to see.
 
-## 🎯 Use Case
-Why is this feature needed?
+**Use Case**
+Describe the problem this feature would solve.
 
-## 💭 Proposed Solution
-How should this feature work?
+**Proposed Solution**
+Your ideas for how this could be implemented.
 
-## 🔄 Alternatives Considered
-Other solutions you've considered
+**Alternatives Considered**
+Other solutions you've considered.
 
-## 📋 Additional Context
-Any other context or screenshots
+**Additional Context**
+Any other relevant information, mockups, or examples.
 ```
 
-## 🧪 Testing
-
-### Running Tests
-
-#### Unit Tests
-```bash
-# Java services
-cd src/ui && ./mvnw test
-cd src/cart && ./mvnw test
-cd src/orders && ./mvnw test
-
-# Go services
-cd src/catalog && go test ./...
-
-# Node.js services
-cd src/checkout && yarn test
-```
-
-#### Integration Tests
-```bash
-# Run integration test suite
-./scripts/integration-tests.sh
-```
-
-#### Infrastructure Tests
-```bash
-# Validate OpenTofu configuration
-cd open-tofu
-tofu init
-tofu validate
-tofu plan
-```
-
-### Test Coverage
-
-- Maintain **>80%** test coverage for new code
-- Add tests for bug fixes
-- Include integration tests for new features
-- Test error conditions and edge cases
-
-## 📚 Documentation
+## 📚 Documentation Contributions
 
 ### Documentation Standards
 
-- Use **clear, concise language**
-- Include **code examples** where helpful
-- Add **diagrams** for complex concepts
-- Keep documentation **up-to-date** with code changes
+- **Clarity**: Write for beginners and experts alike
+- **Completeness**: Include all necessary steps and information
+- **Accuracy**: Test all commands and procedures
+- **Examples**: Provide practical, working examples
+- **Structure**: Use consistent formatting and organization
 
 ### Documentation Types
 
-- **README files** - Overview and quick start
-- **Code comments** - Inline documentation
-- **Architecture docs** - System design and decisions
-- **API documentation** - Service interfaces
-- **Troubleshooting guides** - Common issues and solutions
+1. **User Guides**: Step-by-step instructions for users
+2. **Developer Docs**: Technical documentation for contributors
+3. **API Documentation**: Reference documentation for APIs
+4. **Troubleshooting**: Common issues and solutions
+5. **Architecture**: System design and component descriptions
 
-## 🎨 Code Style
+### Adding Documentation
 
-### General Guidelines
+1. **Create or update markdown files** in the `docs/` directory
+2. **Update the main README** if adding new major sections
+3. **Add links** to new documentation in appropriate places
+4. **Test all commands** and procedures before submitting
 
-- **Consistent formatting** across all files
-- **Meaningful variable and function names**
-- **Clear code comments** for complex logic
-- **Error handling** for all failure scenarios
-- **Security best practices** always
+## 🏷️ Issue Labels
 
-### Language-Specific Guidelines
+We use the following labels to categorize issues:
 
-#### OpenTofu/HCL
-```hcl
-# Use descriptive resource names
-resource "aws_eks_cluster" "retail_store_cluster" {
-  name     = local.cluster_name
-  role_arn = aws_iam_role.cluster_role.arn
-  
-  # Group related configurations
-  vpc_config {
-    subnet_ids = module.vpc.private_subnets
-  }
-}
+### Type Labels
+- `bug`: Something isn't working
+- `enhancement`: New feature or request
+- `documentation`: Improvements or additions to documentation
+- `question`: Further information is requested
+- `help wanted`: Extra attention is needed
+- `good first issue`: Good for newcomers
 
-# Use locals for computed values
-locals {
-  cluster_name = "${var.cluster_name}-${random_string.suffix.result}"
-  common_tags = {
-    Environment = var.environment
-    Project     = "retail-store"
-    ManagedBy   = "opentofu"
-  }
-}
-```
+### Priority Labels
+- `priority/critical`: Critical issues that need immediate attention
+- `priority/high`: High priority issues
+- `priority/medium`: Medium priority issues
+- `priority/low`: Low priority issues
 
-#### Java
-```java
-// Use meaningful class and method names
-public class CartService {
-    
-    // Document complex methods
-    /**
-     * Adds an item to the user's cart with quantity validation
-     * @param userId The user identifier
-     * @param item The item to add
-     * @return Updated cart or error
-     */
-    public Cart addItem(String userId, CartItem item) {
-        // Implementation
-    }
-}
-```
+### Component Labels
+- `component/infrastructure`: OpenTofu/AWS infrastructure
+- `component/kubernetes`: Kubernetes configurations
+- `component/argocd`: ArgoCD configurations
+- `component/applications`: Application code
+- `component/ci-cd`: GitHub Actions workflows
 
-#### Go
-```go
-// Use Go conventions
-type CatalogService struct {
-    repository ProductRepository
-    logger     *log.Logger
-}
+## 🎯 Development Roadmap
 
-// Document exported functions
-// GetProducts retrieves products with optional filtering
-func (s *CatalogService) GetProducts(filter ProductFilter) ([]Product, error) {
-    // Implementation
-}
-```
+### Current Focus Areas
 
-## 🚀 Release Process
+1. **Stability**: Improving reliability and error handling
+2. **Documentation**: Comprehensive guides and troubleshooting
+3. **Testing**: Automated testing and validation
+4. **Security**: Enhanced security practices and scanning
+5. **Monitoring**: Observability and monitoring capabilities
 
-### Versioning
+### Future Enhancements
 
-We use [Semantic Versioning](https://semver.org/):
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for backward-compatible functionality
-- **PATCH** version for backward-compatible bug fixes
+1. **Multi-Environment**: Support for staging/production environments
+2. **Service Mesh**: Istio integration for advanced traffic management
+3. **Observability**: Prometheus, Grafana, and distributed tracing
+4. **Database**: Persistent storage with RDS/Aurora
+5. **Caching**: Redis cluster for improved performance
+6. **Advanced Deployments**: Blue-green and canary deployments
 
-### Release Workflow
+## 🤝 Community Guidelines
 
-1. **Create release branch** from `gitops`
-2. **Update version numbers** and changelog
-3. **Test thoroughly** in staging environment
-4. **Create release PR** with detailed notes
-5. **Merge and tag** the release
-6. **Deploy to production** via GitHub Actions
+### Code of Conduct
 
-## 🆘 Getting Help
+- **Be respectful**: Treat everyone with respect and kindness
+- **Be inclusive**: Welcome people of all backgrounds and experience levels
+- **Be constructive**: Provide helpful feedback and suggestions
+- **Be patient**: Remember that everyone is learning
+- **Be collaborative**: Work together towards common goals
 
-### Community Support
+### Communication Channels
 
-- **GitHub Discussions** - General questions and discussions
-- **GitHub Issues** - Bug reports and feature requests
-- **Documentation** - Check existing docs first
-- **Code Examples** - Look at existing implementations
+- **GitHub Issues**: Bug reports and feature requests
+- **GitHub Discussions**: Questions, ideas, and general discussion
+- **Pull Requests**: Code reviews and collaboration
 
-### Maintainer Contact
+### Getting Help
 
-For urgent issues or security concerns, contact the maintainers directly.
+If you need help with contributing:
 
-## 🙏 Recognition
+1. **Check the documentation** first
+2. **Search existing issues** and discussions
+3. **Ask in GitHub Discussions** for general questions
+4. **Create an issue** for specific problems
 
-Contributors will be recognized in:
-- **README contributors section**
-- **Release notes** for significant contributions
-- **GitHub contributors graph**
-- **Special mentions** for outstanding contributions
+## 🏆 Recognition
+
+Contributors will be recognized in the following ways:
+
+- **Contributors list** in the README
+- **Release notes** mentioning significant contributions
+- **GitHub contributor statistics** and badges
+- **Special recognition** for major contributions
+
+## 📄 License
+
+By contributing to this project, you agree that your contributions will be licensed under the same [MIT License](LICENSE) that covers the project.
+
+## 🙏 Thank You
+
+Thank you for contributing to the Retail Store GitOps project! Your contributions help make this project better for everyone. Whether you're fixing a typo, adding a feature, or helping other users, every contribution is valuable and appreciated.
 
 ---
 
-Thank you for contributing to the Retail Store OpenTofu GitOps project! Your contributions help make this platform better for everyone. 🚀
+**Questions?** Feel free to ask in [GitHub Discussions](https://github.com/NitishJha199/retail-store-opentofu-gitops/discussions) or create an issue if you need help getting started.

@@ -42,6 +42,33 @@ output "cluster_oidc_issuer_url" {
 }
 
 # =============================================================================
+# ECR INFORMATION
+# =============================================================================
+
+output "ecr_registry_url" {
+  description = "ECR registry URL"
+  value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+}
+
+output "ecr_repositories" {
+  description = "ECR repository URLs for each service"
+  value = {
+    for service, repo in aws_ecr_repository.retail_store_services :
+    service => repo.repository_url
+  }
+}
+
+output "aws_account_id" {
+  description = "AWS Account ID"
+  value       = data.aws_caller_identity.current.account_id
+}
+
+output "aws_region" {
+  description = "AWS Region"
+  value       = var.aws_region
+}
+
+# =============================================================================
 # NETWORK INFORMATION
 # =============================================================================
 
@@ -117,5 +144,6 @@ output "useful_commands" {
     argocd_apps         = "kubectl get applications -n ${var.argocd_namespace}"
     ingress_status      = "kubectl get ingress -A"
     describe_cluster    = "kubectl cluster-info"
+    ecr_login          = "aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   }
 }

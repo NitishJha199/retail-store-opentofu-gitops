@@ -3,10 +3,11 @@
 # Declare variables to be passed into your templates.
 
 replicaCount: 1
+
 image:
   repository: 759553606952.dkr.ecr.us-west-2.amazonaws.com/retail-store-checkout
   pullPolicy: Always
-  tag: "617e8b6"
+  tag: "latest"
 imagePullSecrets:
   - name: regcred
 nameOverride: ''
