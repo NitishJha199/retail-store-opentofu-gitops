@@ -1,3 +1,4 @@
+# GitOps Test - Testing GitHub Actions Workflow
 server:
   port: ${port:8080}
   forward-headers-strategy: NATIVE
