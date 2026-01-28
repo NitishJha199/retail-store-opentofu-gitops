@@ -11,6 +11,12 @@ on:
       - 'src/**'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  security-events: write
+  actions: read
+  id-token: write
+
 env:
   AWS_REGION: us-west-2
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
