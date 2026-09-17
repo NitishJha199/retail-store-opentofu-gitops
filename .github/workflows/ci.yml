@@ -10,10 +10,6 @@ on:
 env:
   AWS_REGION: "us-west-2"
 
-  # CodeDNA evidence run:
-  # build GHCR images + SBOMs without ECR/Helm/EKS deployment chain.
-  CODEDNA_EVIDENCE_ONLY: "true"
-
 jobs:
   code-quality:
     name: 🔍 Code Quality Checks
@@ -150,8 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, test-java-services, test-go-services, test-node-services]
     if: |
-      always() &&
-      env.CODEDNA_EVIDENCE_ONLY != 'true' &&
+      always() && 
       needs.detect-changes.outputs.any-service == 'true' &&
       (needs.test-java-services.result == 'success' || needs.test-java-services.result == 'skipped') &&
       (needs.test-go-services.result == 'success' || needs.test-go-services.result == 'skipped') &&
@@ -250,12 +245,7 @@ jobs:
           
           # Update each service's values.yaml with new image tag and ECR registry
           for service in ui catalog cart orders checkout; do
-            if { [ "$service" = "ui" ] && [ "${{ needs.detect-changes.outputs.ui }}" = "true" ]; } ||
-               { [ "$service" = "catalog" ] && [ "${{ needs.detect-changes.outputs.catalog }}" = "true" ]; } ||
-               { [ "$service" = "cart" ] && [ "${{ needs.detect-changes.outputs.cart }}" = "true" ]; } ||
-               { [ "$service" = "orders" ] && [ "${{ needs.detect-changes.outputs.orders }}" = "true" ]; } ||
-               { [ "$service" = "checkout" ] && [ "${{ needs.detect-changes.outputs.checkout }}" = "true" ]; } ||
-               [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ needs.detect-changes.outputs[service] }}" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
               VALUES_FILE="src/${service}/chart/values.yaml"
               
               # Update global ECR registry configuration
@@ -302,23 +292,7 @@ jobs:
           echo "|---------|---------|--------------|-----------|" >> $GITHUB_STEP_SUMMARY
           
           for service in ui catalog cart orders checkout; do
-            case "$service" in
-              ui)
-                changed="${{ needs.detect-changes.outputs.ui }}"
-                ;;
-              catalog)
-                changed="${{ needs.detect-changes.outputs.catalog }}"
-                ;;
-              cart)
-                changed="${{ needs.detect-changes.outputs.cart }}"
-                ;;
-              orders)
-                changed="${{ needs.detect-changes.outputs.orders }}"
-                ;;
-              checkout)
-                changed="${{ needs.detect-changes.outputs.checkout }}"
-                ;;
-            esac
+            changed="${{ needs.detect-changes.outputs[service] }}"
             if [ "$changed" == "true" ]; then
               status="✅ Built"
               tag="${{ github.sha }}"
@@ -363,7 +337,7 @@ jobs:
           reporter: java-junit
           fail-on-error: false
 
-  evidence-test-go-services:
+  test-go-services:
     name: 🐹 Test Go Services
     runs-on: ubuntu-latest
     strategy:
@@ -405,7 +379,7 @@ jobs:
           name: go-coverage-${{ matrix.service }}
           path: src/${{ matrix.service }}/coverage.html
 
-  evidence-test-node-services:
+  test-node-services:
     name: 🟢 Test Node.js Services
     runs-on: ubuntu-latest
     strategy:
@@ -448,7 +422,7 @@ jobs:
   build-images:
     name: 🐳 Build Container Images
     runs-on: ubuntu-latest
-    needs: [test-java-services, evidence-test-go-services, evidence-test-node-services]
+    needs: [test-java-services, test-go-services, test-node-services]
     if: github.event_name == 'push' && github.ref == 'refs/heads/gitops'
     strategy:
       matrix:
@@ -476,7 +450,6 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-
-            type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: 🐳 Build and Push Image
@@ -490,77 +463,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
-
-  generate-sboms:
-    name: 📦 Generate CycloneDX SBOM
-    runs-on: ubuntu-latest
-    needs: build-images
-    if: github.event_name == 'push' && github.ref == 'refs/heads/gitops'
-
-    permissions:
-      contents: read
-      packages: read
-
-    strategy:
-      matrix:
-        service: [ui, catalog, cart, orders, checkout]
-
-    steps:
-      - name: 🔑 Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📥 Pull service image
-        run: |
-          docker pull \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ github.sha }}"
-
-      - name: 📦 Generate CycloneDX SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ github.sha }}
-          format: cyclonedx-json
-          output-file: codedna-sbom-${{ matrix.service }}.cyclonedx.json
-          upload-artifact: false
-
-      - name: 🔎 Validate CycloneDX SBOM
-        run: |
-          python3 - <<'PYVALIDATE'
-          import json
-          from pathlib import Path
-
-          path = Path(
-              "codedna-sbom-${{ matrix.service }}.cyclonedx.json"
-          )
-
-          payload = json.loads(path.read_text())
-
-          if payload.get("bomFormat") != "CycloneDX":
-              raise SystemExit(
-                  f"Invalid SBOM format: {payload.get('bomFormat')}"
-              )
-
-          components = payload.get("components", [])
-
-          print("SBOM:", path)
-          print("bomFormat:", payload.get("bomFormat"))
-          print("specVersion:", payload.get("specVersion"))
-          print("components:", len(components))
-
-          if not isinstance(components, list):
-              raise SystemExit("CycloneDX components is not a list")
-          PYVALIDATE
-
-      - name: 📤 Upload CodeDNA SBOM Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: codedna-sbom-${{ matrix.service }}
-          path: codedna-sbom-${{ matrix.service }}.cyclonedx.json
-          if-no-files-found: error
-          retention-days: 14
 
   security-scan-images:
     name: 🛡️ Security Scan Images
@@ -629,7 +531,7 @@ jobs:
           # Cleanup
           docker-compose -f docker-compose.test.yml down
 
-  evidence-summary:
+  deployment-summary:
     name: 📊 Deployment Summary
     runs-on: ubuntu-latest
     needs: [code-quality, build-images, security-scan-images, integration-tests]

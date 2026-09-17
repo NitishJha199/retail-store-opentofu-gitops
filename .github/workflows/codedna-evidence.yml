@@ -1,0 +1,115 @@
+name: CodeDNA Evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-sbom:
+    name: Evidence - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - ui
+          - catalog
+          - cart
+          - orders
+          - checkout
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/${{ matrix.service }}
+          file: ./src/${{ matrix.service }}/Dockerfile
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: codedna-local/${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify local image
+        run: |
+          docker image inspect \
+            "codedna-local/${{ matrix.service }}:${{ github.sha }}" \
+            --format 'Image ID: {{.Id}}'
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: codedna-local/${{ matrix.service }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: codedna-sbom-${{ matrix.service }}.cyclonedx.json
+          upload-artifact: false
+
+      - name: Validate CycloneDX SBOM
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          service = "${{ matrix.service }}"
+          path = Path(
+              f"codedna-sbom-{service}.cyclonedx.json"
+          )
+
+          payload = json.loads(path.read_text())
+
+          if payload.get("bomFormat") != "CycloneDX":
+              raise SystemExit(
+                  f"Unexpected bomFormat: {payload.get('bomFormat')}"
+              )
+
+          components = payload.get("components", [])
+
+          if not isinstance(components, list):
+              raise SystemExit(
+                  "CycloneDX components field is not a list"
+              )
+
+          print(f"Service: {service}")
+          print(f"SBOM: {path}")
+          print(f"Spec version: {payload.get('specVersion')}")
+          print(f"Components: {len(components)}")
+          PY
+
+      - name: Upload CodeDNA SBOM evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codedna-sbom-${{ matrix.service }}
+          path: codedna-sbom-${{ matrix.service }}.cyclonedx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  evidence-summary:
+    name: CodeDNA Evidence Summary
+    runs-on: ubuntu-latest
+    needs: build-and-sbom
+    if: always()
+
+    steps:
+      - name: Write evidence summary
+        run: |
+          echo "## CodeDNA Evidence Run" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Repository: ${{ github.repository }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build/SBOM result: ${{ needs.build-and-sbom.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This workflow builds local images only." >> "$GITHUB_STEP_SUMMARY"
+          echo "It does not push to ECR or GHCR." >> "$GITHUB_STEP_SUMMARY"
+          echo "It does not modify Helm manifests." >> "$GITHUB_STEP_SUMMARY"
+          echo "It does not invoke ArgoCD or EKS." >> "$GITHUB_STEP_SUMMARY"
