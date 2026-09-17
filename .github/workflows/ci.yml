@@ -250,7 +250,12 @@ jobs:
           
           # Update each service's values.yaml with new image tag and ECR registry
           for service in ui catalog cart orders checkout; do
-            if [ "${{ needs.detect-changes.outputs[service] }}" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if { [ "$service" = "ui" ] && [ "${{ needs.detect-changes.outputs.ui }}" = "true" ]; } ||
+               { [ "$service" = "catalog" ] && [ "${{ needs.detect-changes.outputs.catalog }}" = "true" ]; } ||
+               { [ "$service" = "cart" ] && [ "${{ needs.detect-changes.outputs.cart }}" = "true" ]; } ||
+               { [ "$service" = "orders" ] && [ "${{ needs.detect-changes.outputs.orders }}" = "true" ]; } ||
+               { [ "$service" = "checkout" ] && [ "${{ needs.detect-changes.outputs.checkout }}" = "true" ]; } ||
+               [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
               VALUES_FILE="src/${service}/chart/values.yaml"
               
               # Update global ECR registry configuration
@@ -297,7 +302,23 @@ jobs:
           echo "|---------|---------|--------------|-----------|" >> $GITHUB_STEP_SUMMARY
           
           for service in ui catalog cart orders checkout; do
-            changed="${{ needs.detect-changes.outputs[service] }}"
+            case "$service" in
+              ui)
+                changed="${{ needs.detect-changes.outputs.ui }}"
+                ;;
+              catalog)
+                changed="${{ needs.detect-changes.outputs.catalog }}"
+                ;;
+              cart)
+                changed="${{ needs.detect-changes.outputs.cart }}"
+                ;;
+              orders)
+                changed="${{ needs.detect-changes.outputs.orders }}"
+                ;;
+              checkout)
+                changed="${{ needs.detect-changes.outputs.checkout }}"
+                ;;
+            esac
             if [ "$changed" == "true" ]; then
               status="✅ Built"
               tag="${{ github.sha }}"
@@ -342,7 +363,7 @@ jobs:
           reporter: java-junit
           fail-on-error: false
 
-  test-go-services:
+  evidence-test-go-services:
     name: 🐹 Test Go Services
     runs-on: ubuntu-latest
     strategy:
@@ -384,7 +405,7 @@ jobs:
           name: go-coverage-${{ matrix.service }}
           path: src/${{ matrix.service }}/coverage.html
 
-  test-node-services:
+  evidence-test-node-services:
     name: 🟢 Test Node.js Services
     runs-on: ubuntu-latest
     strategy:
@@ -427,7 +448,7 @@ jobs:
   build-images:
     name: 🐳 Build Container Images
     runs-on: ubuntu-latest
-    needs: [test-java-services, test-go-services, test-node-services]
+    needs: [test-java-services, evidence-test-go-services, evidence-test-node-services]
     if: github.event_name == 'push' && github.ref == 'refs/heads/gitops'
     strategy:
       matrix:
@@ -608,7 +629,7 @@ jobs:
           # Cleanup
           docker-compose -f docker-compose.test.yml down
 
-  deployment-summary:
+  evidence-summary:
     name: 📊 Deployment Summary
     runs-on: ubuntu-latest
     needs: [code-quality, build-images, security-scan-images, integration-tests]
