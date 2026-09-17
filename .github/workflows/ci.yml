@@ -10,6 +10,10 @@ on:
 env:
   AWS_REGION: "us-west-2"
 
+  # CodeDNA evidence run:
+  # build GHCR images + SBOMs without ECR/Helm/EKS deployment chain.
+  CODEDNA_EVIDENCE_ONLY: "true"
+
 jobs:
   code-quality:
     name: 🔍 Code Quality Checks
@@ -146,7 +150,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, test-java-services, test-go-services, test-node-services]
     if: |
-      always() && 
+      always() &&
+      env.CODEDNA_EVIDENCE_ONLY != 'true' &&
       needs.detect-changes.outputs.any-service == 'true' &&
       (needs.test-java-services.result == 'success' || needs.test-java-services.result == 'skipped') &&
       (needs.test-go-services.result == 'success' || needs.test-go-services.result == 'skipped') &&
@@ -450,6 +455,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-
+            type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: 🐳 Build and Push Image
@@ -463,6 +469,77 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+
+  generate-sboms:
+    name: 📦 Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/gitops'
+
+    permissions:
+      contents: read
+      packages: read
+
+    strategy:
+      matrix:
+        service: [ui, catalog, cart, orders, checkout]
+
+    steps:
+      - name: 🔑 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📥 Pull service image
+        run: |
+          docker pull \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ github.sha }}"
+
+      - name: 📦 Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: codedna-sbom-${{ matrix.service }}.cyclonedx.json
+          upload-artifact: false
+
+      - name: 🔎 Validate CycloneDX SBOM
+        run: |
+          python3 - <<'PYVALIDATE'
+          import json
+          from pathlib import Path
+
+          path = Path(
+              "codedna-sbom-${{ matrix.service }}.cyclonedx.json"
+          )
+
+          payload = json.loads(path.read_text())
+
+          if payload.get("bomFormat") != "CycloneDX":
+              raise SystemExit(
+                  f"Invalid SBOM format: {payload.get('bomFormat')}"
+              )
+
+          components = payload.get("components", [])
+
+          print("SBOM:", path)
+          print("bomFormat:", payload.get("bomFormat"))
+          print("specVersion:", payload.get("specVersion"))
+          print("components:", len(components))
+
+          if not isinstance(components, list):
+              raise SystemExit("CycloneDX components is not a list")
+          PYVALIDATE
+
+      - name: 📤 Upload CodeDNA SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codedna-sbom-${{ matrix.service }}
+          path: codedna-sbom-${{ matrix.service }}.cyclonedx.json
+          if-no-files-found: error
+          retention-days: 14
 
   security-scan-images:
     name: 🛡️ Security Scan Images
